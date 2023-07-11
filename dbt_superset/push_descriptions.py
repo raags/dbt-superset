@@ -230,18 +230,18 @@ def put_descriptions_to_superset(superset, dataset, superset_pause_after_update)
 
 def main(dbt_project_dir, dbt_db_name,
          superset_url, superset_db_id, superset_refresh_columns, superset_pause_after_update,
-         superset_access_token, superset_refresh_token):
+         username, password):
 
-    # require at least one token for Superset
-    assert superset_access_token is not None or superset_refresh_token is not None, \
-           "Add ``SUPERSET_ACCESS_TOKEN`` or ``SUPERSET_REFRESH_TOKEN`` " \
+    # require creds
+    assert username is not None or superset_refresh_token is not None, \
+           "Add ``USERNAME`` or ``PASSWORD`` " \
            "to your environment variables or provide in CLI " \
-           "via ``superset-access-token`` or ``superset-refresh-token``."
-
-    superset = Superset(superset_url + '/api/v1',
-                        access_token=superset_access_token, refresh_token=superset_refresh_token)
+           "via ``username`` or ``password``."
 
     logging.info("Starting the script!")
+
+    superset = Superset(superset_url + '/api/v1',
+                        username=username, password=password)
 
     sst_datasets = get_datasets_from_superset(superset, superset_db_id)
     logging.info("There are %d physical datasets in Superset overall.", len(sst_datasets))

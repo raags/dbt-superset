@@ -106,8 +106,8 @@ def get_tables_from_dbt(dbt_manifest, dbt_db_name):
     return tables
 
 
-def get_dashboards_from_superset(superset, superset_url, superset_db_id):
-    logging.info("Getting published dashboards from Superset.")
+def get_dashboards_from_superset(superset, superset_url, superset_dashboard_url, superset_db_id):
+    logging.info(f"Getting published dashboards for db id: {superset_db_id}")
     page_number = 0
     dashboards_id = []
     while True:
@@ -144,7 +144,7 @@ def get_dashboards_from_superset(superset, superset_url, superset_db_id):
 
             dashboard_id = result_dashboard['id']
             title = result_dashboard['dashboard_title']
-            url = superset_url + '/superset/dashboard/' + str(dashboard_id)
+            url = superset_dashboard_url + '/superset/dashboard/' + str(dashboard_id)
             owner_name = result_dashboard['owners'][0]['first_name'] + ' ' + result_dashboard['owners'][0]['last_name']
 
             logging.info("Getting info about dashboard's datasets.")
@@ -195,7 +195,7 @@ def get_dashboards_from_superset(superset, superset_url, superset_db_id):
 
 def get_datasets_from_superset(superset, dashboards_datasets, dbt_tables,
                                sql_dialect, superset_db_id):
-    logging.info("Getting datasets info from Superset.")
+    logging.info(f"Getting datasets info for db id: {superset_db_id}")
     page_number = 0
     datasets = {}
     while True:
@@ -224,6 +224,11 @@ def get_datasets_from_superset(superset, dashboards_datasets, dbt_tables,
                         and (superset_db_id is None or database_id == superset_db_id):
                     kind = r['kind']
                     if kind == 'virtual':  # built on custom sql
+                        # rags: skip virtual tables as columns may not be
+                        # standardised
+                        logging.warn(f"Skipping virtual dataset {dataset_key}")
+                        continue
+
                         sql = r['sql']
                         tables = get_tables_from_sql(sql, sql_dialect)
                         tables = [table if '.' in table else f'{schema}.{table}'
@@ -298,19 +303,23 @@ class YamlFormatted(ruamel.yaml.YAML):
 
 
 def main(dbt_project_dir, exposures_path, dbt_db_name,
-         superset_url, superset_db_id, sql_dialect,
-         superset_access_token, superset_refresh_token):
+         superset_url, superset_dashboard_url,
+         superset_db_id, sql_dialect,
+         username, password):
 
-    # require at least one token for Superset
-    assert superset_access_token is not None or superset_refresh_token is not None, \
-           "Add ``SUPERSET_ACCESS_TOKEN`` or ``SUPERSET_REFRESH_TOKEN`` " \
+    # require creds
+    assert username is not None or superset_refresh_token is not None, \
+           "Add ``USERNAME`` or ``PASSWORD`` " \
            "to your environment variables or provide in CLI " \
-           "via ``superset-access-token`` or ``superset-refresh-token``."
+           "via ``username`` or ``password``."
 
-    superset = Superset(superset_url + '/api/v1',
-                        access_token=superset_access_token, refresh_token=superset_refresh_token)
+    superset_dashboard_url = superset_dashboard_url or superset_url
 
     logging.info("Starting the script!")
+
+    superset = Superset(superset_url + '/api/v1',
+                        username=username, password=password)
+
 
     with open(f'{dbt_project_dir}/target/manifest.json') as f:
         dbt_manifest = json.load(f)
@@ -329,6 +338,7 @@ def main(dbt_project_dir, exposures_path, dbt_db_name,
     dbt_tables = get_tables_from_dbt(dbt_manifest, dbt_db_name)
     dashboards, dashboards_datasets = get_dashboards_from_superset(superset,
                                                                    superset_url,
+                                                                   superset_dashboard_url,
                                                                    superset_db_id)
     datasets = get_datasets_from_superset(superset,
                                           dashboards_datasets,

@@ -42,22 +42,28 @@ def push_descriptions(dbt_project_dir: str = typer.Option('.', help="Directory p
                                                                    "https://mysuperset.mycompany.com"),
                       superset_db_id: int = typer.Option(None, help="ID of your database within Superset towards which "
                                                                     "the push should be reduced to run."),
+                      dataset_filter: str = typer.Option(None, help="Filter dataset to only include dataset with this name"
+                                                                    "Useful to exclude non dbt models"),
                       superset_refresh_columns: bool = typer.Option(False, help="Whether columns in Superset should be "
                                                                                 "refreshed from database before "
                                                                                 "the push."),
-                      superset_pause_after_update: int = typer.Option(None, help="Number of seconds for which the "
-                                                                                 "script pauses after any update of "
-                                                                                 "Superset columns. This is to allow "
-                                                                                 "databases to catch up in "
-                                                                                 "the meantime."),
-                      username: str = typer.Option(None, envvar="USERNAME",
-                                                   help="Username for Superset (check `superset fab` cli)"),
-                      password: str = typer.Option(None, envvar="PASSWORD",
-                                                   help="User password")):
+                      superset_pause_after_update: int = typer.Option(2, help="Number of seconds for which the "
+                                                                              "script pauses after any update of "
+                                                                              "Superset columns. This is to allow "
+                                                                              "databases to catch up in "
+                                                                              "the meantime."),
+                      default_descriptions_yaml_path: str = typer.Option(None,
+                                                                         help="Yaml file with list of column and "
+                                                                         "their descriptions which allows to set default "
+                                                                         "descriptions for columns where None are provided in a model ."
+                                                                         "This prevents duplication of effort ."
+                                                                         "Format is 'columns': <column_name>: desc:'"),
+                      username: str = typer.Option(None, envvar="USERNAME", help="Username for Superset (check `superset fab` cli)"),
+                      password: str = typer.Option(None, envvar="PASSWORD", help="User password")):
 
-    push_descriptions_main(dbt_project_dir, dbt_db_name,
-                           superset_url, superset_db_id, superset_refresh_columns, superset_pause_after_update,
-                           username, password)
+    push_descriptions_main(dbt_project_dir, dbt_db_name, superset_url, superset_db_id,
+                           dataset_filter, superset_refresh_columns, superset_pause_after_update,
+                           default_descriptions_yaml_path, username, password)
 
 
 if __name__ == '__main__':

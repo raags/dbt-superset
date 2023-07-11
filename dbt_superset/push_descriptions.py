@@ -2,6 +2,8 @@ import json
 import logging
 import re
 import time
+import ruamel.yaml
+import pathlib
 
 from bs4 import BeautifulSoup
 from markdown import markdown
@@ -12,7 +14,7 @@ from .superset_api import Superset
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 
-def get_datasets_from_superset(superset, superset_db_id):
+def get_datasets_from_superset(superset, superset_db_id, dataset_filter=None):
     logging.info("Getting physical datasets from Superset.")
 
     page_number = 0
@@ -43,6 +45,12 @@ def get_datasets_from_superset(superset, superset_db_id):
                     name = r['table_name']
                     schema = r['schema']
                     dataset_key = f'{schema}.{name}'  # used as unique identifier
+
+                    if dataset_filter and dataset_filter not in dataset_key:
+                        logging.info(f"Skipping {dataset_key} for db id {dataset_id} due to schema filter: `{dataset_filter}`")
+                        continue
+                    else:
+                        logging.info(f"Matched {dataset_key} for db id {dataset_id} due to schema filter: `{dataset_filter}`")
 
                     dataset_dict = {
                         'id': dataset_id,
@@ -96,6 +104,12 @@ def get_tables_from_dbt(dbt_manifest, dbt_db_name):
 
     return tables
 
+def get_default_column_desc(default_descriptions_yaml_path):
+    if default_descriptions_yaml_path:
+        yaml = ruamel.yaml.YAML(typ='safe')
+        return yaml.load(pathlib.Path(default_descriptions_yaml_path))
+    else:
+        return {}
 
 def refresh_columns_in_superset(superset, dataset_id):
     logging.info("Refreshing columns in Superset.")
@@ -143,12 +157,13 @@ def convert_markdown_to_plain_text(md_string):
     return single_line
 
 
-def merge_columns_info(dataset, tables):
-    logging.info("Merging columns info from Superset and manifest.json file.")
+def merge_columns_info(dataset, tables, default_descriptions):
+    logging.info("Merging columns info from Superset, Global descriptions yaml and manifest.json file.")
 
     key = dataset['key']
     sst_columns = dataset['columns']
     dbt_columns = tables.get(key, {}).get('columns', {})
+    default_column_descs = default_descriptions.get('columns', {})
 
     sst_description = dataset['description']
     dbt_description = tables.get(key, {}).get('description')
@@ -167,14 +182,19 @@ def merge_columns_info(dataset, tables):
         }
 
         # add column descriptions
-        if column_name in dbt_columns \
-                and 'description' in dbt_columns[column_name] \
-                and (sst_column['expression'] is None  # database columns
-                     or sst_column['expression'] == ''):
-            description = dbt_columns[column_name]['description']
-            description = convert_markdown_to_plain_text(description)
-        else:
-            description = sst_column['description']
+        description = sst_column['description']
+        # ensure database column
+        if sst_column['expression'] is None or sst_column['expression'] == '':
+            if column_name in dbt_columns and 'description' in dbt_columns[column_name]:
+                description = convert_markdown_to_plain_text(
+                    dbt_columns[column_name]['description']
+                )
+            # fallback to default descriptions defined in yaml file
+            elif column_name in default_column_descs and 'desc' in default_column_descs[column_name]:
+                description = convert_markdown_to_plain_text(
+                    default_column_descs[column_name]['desc']
+                )
+
         column_new['description'] = description
 
         columns_new.append(column_new)
@@ -222,15 +242,16 @@ def put_descriptions_to_superset(superset, dataset, superset_pause_after_update)
     if description_new != description_old or \
        not check_columns_equal(columns_new, columns_old):
         payload = {'description': description_new, 'columns': columns_new, 'owners': owners_new}
+        logging.debug(f"Adding new description for dataset {dataset['key']}")
         superset.request('PUT', f"/dataset/{dataset['id']}?override_columns=false", json=payload)
         pause_after_update(superset_pause_after_update)
     else:
         logging.info("Skipping PUT execute request as nothing would be updated.")
 
 
-def main(dbt_project_dir, dbt_db_name,
-         superset_url, superset_db_id, superset_refresh_columns, superset_pause_after_update,
-         username, password):
+def main(dbt_project_dir, dbt_db_name, superset_url, superset_db_id,
+         dataset_filter, superset_refresh_columns, superset_pause_after_update,
+         default_descriptions_yaml_path, username, password):
 
     # require creds
     assert username is not None or superset_refresh_token is not None, \
@@ -243,12 +264,14 @@ def main(dbt_project_dir, dbt_db_name,
     superset = Superset(superset_url + '/api/v1',
                         username=username, password=password)
 
-    sst_datasets = get_datasets_from_superset(superset, superset_db_id)
+    sst_datasets = get_datasets_from_superset(superset, superset_db_id, dataset_filter)
     logging.info("There are %d physical datasets in Superset overall.", len(sst_datasets))
 
     with open(f'{dbt_project_dir}/target/manifest.json') as f:
         dbt_manifest = json.load(f)
 
+
+    default_descriptions = get_default_column_desc(default_descriptions_yaml_path)
     dbt_tables = get_tables_from_dbt(dbt_manifest, dbt_db_name)
 
     sst_datasets_dbt_filtered = [d for d in sst_datasets if d["key"] in dbt_tables]
@@ -262,7 +285,7 @@ def main(dbt_project_dir, dbt_db_name,
                 refresh_columns_in_superset(superset, sst_dataset_id)
                 pause_after_update(superset_pause_after_update)
             sst_dataset_w_cols = add_superset_columns(superset, sst_dataset)
-            sst_dataset_w_cols_new = merge_columns_info(sst_dataset_w_cols, dbt_tables)
+            sst_dataset_w_cols_new = merge_columns_info(sst_dataset_w_cols, dbt_tables, default_descriptions)
             put_descriptions_to_superset(superset, sst_dataset_w_cols_new, superset_pause_after_update)
         except HTTPError as e:
             logging.error("The dataset with ID=%d wasn't updated. Check the error below.",

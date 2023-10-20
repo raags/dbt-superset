@@ -22,6 +22,8 @@ class Superset:
         self.password = password
         self.access_token = None
         self.refresh_token = None
+        self.csrf_token = ''
+        self.cookies = {}
 
         self._login()
 
@@ -35,8 +37,15 @@ class Superset:
                            refresh_token_if_needed=False)
         self.access_token = res['access_token']
         self.refresh_token = res['refresh_token']
+        self._csrf_token()
 
         logger.debug("Login successful")
+
+    def _csrf_token(self):
+        res = self.request('GET', '/security/csrf_token')
+        self.csrf_token = res['result']
+
+        logger.debug("Fetched csrf token")
 
     def _headers(self, **headers):
         if self.access_token is None:
@@ -44,6 +53,7 @@ class Superset:
 
         return {
             'Authorization': f'Bearer {self.access_token}',
+            'X-CSRFToken': self.csrf_token,
             **headers,
         }
 
@@ -88,7 +98,8 @@ class Superset:
             headers = {}
 
         url = self.api_url + endpoint
-        res = requests.request(method, url, headers=self._headers(**headers), **request_kwargs)
+        res = requests.request(method, url, headers=self._headers(**headers), cookies=self.cookies,
+                               **request_kwargs)
 
         logger.debug("Request finished with status: %d", res.status_code)
 
@@ -97,6 +108,10 @@ class Superset:
             logger.debug("Retrying %s request for endpoint %s with refreshed token")
             res = requests.request(method, url, headers=self._headers(**headers))
             logger.debug("Request finished with status: %d", res.status_code)
+
+        # implicitly store cookies, ideally should be explicit
+        if res.cookies:
+            self.cookies = res.cookies.get_dict()
 
         res.raise_for_status()
         return res.json()

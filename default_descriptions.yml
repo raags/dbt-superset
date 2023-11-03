@@ -1,0 +1,18 @@
+---
+# Use this to define default descriptions for column across all models
+# The `dbt-superset` tool will read, and apply the descriptions to
+# dbt generated docs + superset datasets.
+#
+# This enables standardization, prevents duplication, and reduces effort.
+#
+# Descriptions can still be defined in dbt `schema.yml` file, which will
+# override the defaults here, and allows for customization where needed.
+#
+columns:
+  example_column:
+    desc: >
+      my explanation
+  example2:
+    desc: >
+      Another multiline
+      explanation

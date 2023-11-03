@@ -74,6 +74,39 @@ def get_datasets_from_superset(superset, superset_db_id, dataset_filter=None):
 
     return datasets
 
+def update_dbt_with_default_desc(dbt_manifest, dbt_catalog, default_descriptions):
+    default_column_descs = default_descriptions.get('columns', {})
+
+    for table_type in ['nodes', 'sources']:
+        manifest_subset = dbt_manifest[table_type]
+        catalog_subset = dbt_catalog[table_type]
+
+        # catalog lists all tables and columns, manifest only contains a subset
+        for table_key_long in catalog_subset:
+            catalog_table = catalog_subset[table_key_long]
+            catalog_table_name = catalog_table['metadata']['name']
+            catalog_table_columns = catalog_table['columns']
+
+            manifest_table = manifest_subset[table_key_long]
+            manifest_table_columns = manifest_table['columns']
+
+            for catalog_column in catalog_table_columns:
+                logging.debug(f'Processing for dbt catalog table {catalog_table_name} - {catalog_column}')
+                if catalog_column not in manifest_table_columns and catalog_column in default_column_descs:
+                    # add column with the default description
+                    logging.info(f'Adding default desc for {catalog_table_name} - {catalog_column}')
+                    manifest_subset[table_key_long]['columns'][catalog_column] = {
+                        "name": catalog_column,
+                        "description": default_column_descs[catalog_column]['desc'],
+                        "meta": {},
+                        "data_type": None,
+                        "quote": None,
+                        "tags": []
+                    }
+
+        dbt_manifest[table_type] = manifest_subset
+
+    return dbt_manifest
 
 def get_tables_from_dbt(dbt_manifest, dbt_db_name):
     tables = {}
@@ -158,7 +191,6 @@ def convert_markdown_to_plain_text(md_string):
 
 
 def merge_columns_info(dataset, tables, default_descriptions):
-    logging.info("Merging columns info from Superset, Global descriptions yaml and manifest.json file.")
 
     key = dataset['key']
     sst_columns = dataset['columns']
@@ -242,7 +274,7 @@ def put_descriptions_to_superset(superset, dataset, superset_pause_after_update)
     if description_new != description_old or \
        not check_columns_equal(columns_new, columns_old):
         payload = {'description': description_new, 'columns': columns_new, 'owners': owners_new}
-        logging.debug(f"Adding new description for dataset {dataset['key']}")
+        logging.info(f"Adding new descriptions for dataset {dataset['key']}")
         superset.request('PUT', f"/dataset/{dataset['id']}?override_columns=false", json=payload)
         pause_after_update(superset_pause_after_update)
     else:
@@ -270,8 +302,20 @@ def main(dbt_project_dir, dbt_db_name, superset_url, superset_db_id,
     with open(f'{dbt_project_dir}/target/manifest.json') as f:
         dbt_manifest = json.load(f)
 
-
+    # update dbt docs with default descriptions in manifest first
+    # TODO: potentially no need to apply default descs again when pushing to superset
+    #       see put_descriptions_to_superset
     default_descriptions = get_default_column_desc(default_descriptions_yaml_path)
+    if default_descriptions:
+        with open(f'{dbt_project_dir}/target/catalog.json') as f:
+            dbt_catalog = json.load(f)
+        updated_dbt_manifest = update_dbt_with_default_desc(dbt_manifest, dbt_catalog, default_descriptions)
+        logging.info("Updating Dbt manifest with default descriptions")
+        with open(f'{dbt_project_dir}/target/manifest.json', 'w') as f:
+            json.dump(updated_dbt_manifest, f, indent=4)
+        dbt_manifest = updated_dbt_manifest
+
+    # push desc to superset
     dbt_tables = get_tables_from_dbt(dbt_manifest, dbt_db_name)
 
     sst_datasets_dbt_filtered = [d for d in sst_datasets if d["key"] in dbt_tables]

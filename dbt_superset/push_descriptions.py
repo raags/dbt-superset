@@ -87,6 +87,16 @@ def update_dbt_with_default_desc(dbt_manifest, dbt_catalog, default_descriptions
             catalog_table_name = catalog_table['metadata']['name']
             catalog_table_columns = catalog_table['columns']
 
+            # create table in manifest if it doesn't exist
+            if table_key_long not in manifest_subset:
+                manifest_subset[table_key_long] = {
+                    'name': catalog_table_name,
+                    'schema': catalog_table['metadata']['schema'],
+                    'database': catalog_table['metadata']['database'],
+                    'description': '',
+                    'columns': {}
+                }
+
             manifest_table = manifest_subset[table_key_long]
             manifest_table_columns = manifest_table['columns']
 
